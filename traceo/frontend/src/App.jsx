@@ -185,9 +185,52 @@ const Login = ({ onLogin }) => {
         <div className="form-group"><label>Email</label><input type="email" placeholder="votre@email.com" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} onKeyDown={e => e.key === 'Enter' && submit()} /></div>
         <div className="form-group"><label>Mot de passe</label><input type="password" placeholder="••••••••" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === 'Enter' && submit()} /></div>
         <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '13px' }} onClick={submit} disabled={loading}>{loading ? 'Connexion...' : 'Se connecter'}</button>
-        <div style={{ marginTop: 16, padding: 12, background: 'rgba(59,114,255,0.08)', borderRadius: 8, fontSize: 12, color: 'var(--gray)', lineHeight: 1.8 }}>
-          <b style={{ color: 'var(--white)' }}>Démo:</b> admin@traceo.cm / admin123
-        </div>
+        <p style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: 'var(--gray)' }}>Contactez l'administrateur Traceo pour obtenir vos accès.</p>
+      </div>
+    </div>
+  );
+};
+
+
+// ─── ADMIN : Profil ───
+const AdminProfile = ({ user, toast, onUpdate }) => {
+  const [form, setForm] = useState({ name: user.name, email: user.email, currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [loading, setLoading] = useState(false);
+
+  const save = async () => {
+    if (form.newPassword && form.newPassword !== form.confirmPassword) {
+      toast('Les mots de passe ne correspondent pas', 'error'); return;
+    }
+    if (form.newPassword && form.newPassword.length < 6) {
+      toast('Mot de passe trop court (6 caractères minimum)', 'error'); return;
+    }
+    setLoading(true);
+    try {
+      await apiFetch('/admin/profile', {
+        method: 'PATCH',
+        body: { name: form.name, email: form.email, currentPassword: form.currentPassword || undefined, newPassword: form.newPassword || undefined }
+      });
+      toast('Profil mis à jour avec succès', 'success');
+      onUpdate({ ...user, name: form.name, email: form.email });
+      setForm(f => ({ ...f, currentPassword: '', newPassword: '', confirmPassword: '' }));
+    } catch (e) { toast(e.message, 'error'); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div>
+      <h1 className="page-title">Mon profil</h1>
+      <div className="card" style={{ maxWidth: 500 }}>
+        <div className="card-title">Informations personnelles</div>
+        <div className="form-group"><label>Nom</label><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></div>
+        <div className="form-group"><label>Email</label><input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
+      </div>
+      <div className="card" style={{ maxWidth: 500 }}>
+        <div className="card-title">Changer le mot de passe</div>
+        <div className="form-group"><label>Mot de passe actuel</label><input type="password" placeholder="••••••••" value={form.currentPassword} onChange={e => setForm(f => ({ ...f, currentPassword: e.target.value }))} /></div>
+        <div className="form-group"><label>Nouveau mot de passe</label><input type="password" placeholder="••••••••" value={form.newPassword} onChange={e => setForm(f => ({ ...f, newPassword: e.target.value }))} /></div>
+        <div className="form-group"><label>Confirmer</label><input type="password" placeholder="••••••••" value={form.confirmPassword} onChange={e => setForm(f => ({ ...f, confirmPassword: e.target.value }))} /></div>
+        <button className="btn btn-primary" onClick={save} disabled={loading}>{loading ? 'Sauvegarde...' : '💾 Sauvegarder'}</button>
       </div>
     </div>
   );
@@ -1004,7 +1047,7 @@ export default function App() {
   }
 
   const navItems = {
-    admin: [{ id: 'deliveries', label: 'Dashboard', icon: '📊' }],
+    admin: [{ id: 'deliveries', label: 'Dashboard', icon: '📊' }, { id: 'profile', label: 'Mon profil', icon: '👤' }],
     manager: [
       { id: 'deliveries', label: 'Livraisons', icon: '📦' },
       { id: 'deliverers', label: 'Livreurs', icon: '🛵' },
@@ -1038,7 +1081,8 @@ export default function App() {
             </aside>
           )}
           <main className="main">
-            {user.role === 'admin' && <AdminDashboard toast={showToast} />}
+            {user.role === 'admin' && page === 'deliveries' && <AdminDashboard toast={showToast} />}
+            {user.role === 'admin' && page === 'profile' && <AdminProfile user={user} toast={showToast} onUpdate={u => setUser(u)} />}
             {user.role === 'manager' && page === 'deliveries' && <ManagerDeliveries user={user} toast={showToast} />}
             {user.role === 'manager' && page === 'deliverers' && <ManagerDeliverers toast={showToast} />}
             {user.role === 'manager' && page === 'api' && <ManagerApi toast={showToast} />}
