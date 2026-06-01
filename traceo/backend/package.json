@@ -1,7 +1,6 @@
 {
   "name": "traceo-backend-v2",
   "version": "2.0.0",
-  "description": "Traceo - API livraison last-mile",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -12,6 +11,7 @@
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.0",
+    "pg": "^8.11.0",
     "socket.io": "^4.6.1",
     "uuid": "^9.0.0"
   },
