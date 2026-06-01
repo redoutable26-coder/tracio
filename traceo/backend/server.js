@@ -189,6 +189,33 @@ app.post('/api/auth/login', async (req, res) => {
   res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
 });
 
+
+// ── Profil Admin ──
+app.get('/api/admin/profile', auth(['admin']), (req, res) => {
+  const user = db.users.find(u => u.id === req.user.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+  res.json({ id: user.id, name: user.name, email: user.email, role: user.role });
+});
+
+app.patch('/api/admin/profile', auth(['admin']), async (req, res) => {
+  const { name, email, currentPassword, newPassword } = req.body;
+  const user = db.users.find(u => u.id === req.user.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+
+  if (newPassword) {
+    if (!currentPassword) return res.status(400).json({ error: 'Mot de passe actuel requis' });
+    if (!bcrypt.compareSync(currentPassword, user.password)) {
+      return res.status(401).json({ error: 'Mot de passe actuel incorrect' });
+    }
+    user.password = bcrypt.hashSync(newPassword, 10);
+  }
+
+  if (name) user.name = name;
+  if (email) user.email = email;
+
+  res.json({ id: user.id, name: user.name, email: user.email, role: user.role });
+});
+
 // ════════════════════════════════════════════
 // ADMIN — Dashboard complet
 // ════════════════════════════════════════════
