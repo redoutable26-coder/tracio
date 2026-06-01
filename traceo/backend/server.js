@@ -15,9 +15,8 @@ app.use(cors());
 app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'traceo_secret_v2_2026';
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || null;
-const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID || null;
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const FONNTE_TOKEN = process.env.FONNTE_TOKEN || null;
 
 // ════════════════════════════════════════════
 // BASE DE DONNÉES EN MÉMOIRE
@@ -36,10 +35,10 @@ const db = {
   deliverers: [],
   deliveries: [],
   locationTokens: {},
-  apiKeys: {},        // clés API pour intégration externe
-  subscriptions: {},  // abonnements par company
-  whatsappLogs: [],   // logs des messages envoyés
-  systemConfig: {     // configuration globale admin
+  apiKeys: {},
+  subscriptions: {},
+  whatsappLogs: [],
+  systemConfig: {
     whatsappEnabled: false,
     defaultTrialDays: 30,
     plans: {
@@ -54,7 +53,7 @@ const db = {
 // SERVICES
 // ════════════════════════════════════════════
 
-// ── WhatsApp Service ──
+// ── WhatsApp via Fonnte ──
 const sendWhatsApp = async (phone, message, companyName = 'Traceo') => {
   const cleanPhone = phone.replace(/\D/g, '');
   const log = {
@@ -66,7 +65,7 @@ const sendWhatsApp = async (phone, message, companyName = 'Traceo') => {
     status: 'pending'
   };
 
-  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) {
+  if (!FONNTE_TOKEN) {
     log.status = 'simulated';
     console.log(`📱 [WhatsApp SIMULÉ → ${cleanPhone}]`);
     console.log(`   De: ${companyName}`);
@@ -76,21 +75,13 @@ const sendWhatsApp = async (phone, message, companyName = 'Traceo') => {
   }
 
   try {
-    const res = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_ID}/messages`, {
+    const res = await fetch('https://api.fonnte.com/send', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: cleanPhone,
-        type: 'text',
-        text: { body: message }
-      })
+      headers: { 'Authorization': FONNTE_TOKEN },
+      body: new URLSearchParams({ target: cleanPhone, message })
     });
     const data = await res.json();
-    log.status = res.ok ? 'sent' : 'failed';
+    log.status = data.status ? 'sent' : 'failed';
     log.response = data;
     db.whatsappLogs.push(log);
     return data;
@@ -157,7 +148,6 @@ const auth = (roles = []) => (req, res, next) => {
   }
 };
 
-// Middleware API Key (pour intégrations externes)
 const apiKeyAuth = (req, res, next) => {
   const key = req.headers['x-api-key'] || req.query.api_key;
   if (!key) return res.status(401).json({ error: 'Clé API manquante. Header: x-api-key' });
@@ -189,7 +179,6 @@ app.post('/api/auth/login', async (req, res) => {
   res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
 });
 
-
 // ── Profil Admin ──
 app.get('/api/admin/profile', auth(['admin']), (req, res) => {
   const user = db.users.find(u => u.id === req.user.id);
@@ -217,7 +206,7 @@ app.patch('/api/admin/profile', auth(['admin']), async (req, res) => {
 });
 
 // ════════════════════════════════════════════
-// ADMIN — Dashboard complet
+// ADMIN
 // ════════════════════════════════════════════
 
 app.get('/api/admin/stats', auth(['admin']), (req, res) => {
@@ -266,7 +255,6 @@ app.post('/api/admin/companies', auth(['admin']), async (req, res) => {
   };
   db.companies.push(company);
 
-  // Créer abonnement initial
   db.subscriptions[company.id] = {
     plan,
     active: true,
@@ -275,9 +263,7 @@ app.post('/api/admin/companies', auth(['admin']), async (req, res) => {
     startedAt: new Date().toISOString()
   };
 
-  // Générer clé API automatiquement
   const apiKey = generateApiKey(company.id);
-
   res.json({ ...company, password: undefined, apiKey, subscription: db.subscriptions[company.id] });
 });
 
@@ -299,7 +285,6 @@ app.patch('/api/admin/companies/:id/subscription', auth(['admin']), (req, res) =
 });
 
 app.post('/api/admin/companies/:id/regenerate-key', auth(['admin']), (req, res) => {
-  // Révoquer ancienne clé
   Object.entries(db.apiKeys).forEach(([k, v]) => {
     if (v.companyId === req.params.id) db.apiKeys[k].active = false;
   });
@@ -321,7 +306,7 @@ app.patch('/api/admin/config', auth(['admin']), (req, res) => {
 });
 
 // ════════════════════════════════════════════
-// MANAGER — Panel gérant
+// MANAGER
 // ════════════════════════════════════════════
 
 app.get('/api/manager/profile', auth(['manager']), (req, res) => {
@@ -391,24 +376,23 @@ app.post('/api/manager/deliveries', auth(['manager']), async (req, res) => {
 
   db.deliveries.push(delivery);
   db.locationTokens[locationToken] = delivery.id;
-
-  // Incrémenter compteur abonnement
   if (db.subscriptions[req.user.id]) db.subscriptions[req.user.id].deliveriesThisMonth++;
 
-  // Envoyer WhatsApp au client
   const shareLink = `${APP_URL}/share/${locationToken}`;
   const clientMsg = `Bonjour ${clientName} ! Votre commande chez *${company.name}* est prête.\n\nPour que notre livreur vous trouve, appuyez sur ce lien et partagez votre position :\n${shareLink}\n\n_Ce lien expire dans 3 heures._`;
 
+  let whatsappSent = false;
   try {
     await sendWhatsApp(delivery.clientWhatsapp, clientMsg, company.name);
     delivery.whatsappClientSent = true;
+    whatsappSent = true;
   } catch (e) {
     delivery.whatsappClientSent = false;
     delivery.whatsappError = e.message;
   }
 
   io.to(`company-${req.user.id}`).emit('delivery-created', delivery);
-  res.json({ ...delivery, shareLink });
+  res.json({ ...delivery, shareLink, whatsappSent, message: whatsappSent ? `WhatsApp envoyé à ${delivery.clientWhatsapp}` : `WhatsApp non configuré. Lien: ${shareLink}` });
 });
 
 app.patch('/api/manager/deliveries/:id/assign', auth(['manager']), async (req, res) => {
@@ -421,7 +405,6 @@ app.patch('/api/manager/deliveries/:id/assign', auth(['manager']), async (req, r
   const deliverer = db.deliverers.find(d => d.id === req.body.delivererId);
   const company = db.companies.find(c => c.id === req.user.id);
 
-  // Envoyer WhatsApp au livreur si position déjà reçue
   if (deliverer && delivery.clientLocation) {
     const mapsLink = `https://maps.google.com/?q=${delivery.clientLocation.latitude},${delivery.clientLocation.longitude}`;
     const delivererMsg = `📦 *Nouvelle livraison - ${company.name}*\n\nClient: *${delivery.clientName}*\nTéléphone: ${delivery.clientPhone}\n\n📍 Position du client:\n${mapsLink}\n\nBonne route !`;
@@ -459,7 +442,7 @@ app.get('/api/manager/stats', auth(['manager']), (req, res) => {
 });
 
 // ════════════════════════════════════════════
-// CLIENT — Partage de position (sans auth)
+// CLIENT — Partage de position
 // ════════════════════════════════════════════
 
 app.get('/api/share/:token', (req, res) => {
@@ -486,10 +469,8 @@ app.post('/api/share/:token/location', async (req, res) => {
   const company = db.companies.find(c => c.id === delivery.companyId);
   const mapsLink = `https://maps.google.com/?q=${latitude},${longitude}`;
 
-  // Notifier gérant temps réel
   io.to(`company-${delivery.companyId}`).emit('delivery-updated', delivery);
 
-  // Envoyer WhatsApp au livreur si déjà assigné
   if (delivery.delivererId) {
     const deliverer = db.deliverers.find(d => d.id === delivery.delivererId);
     if (deliverer) {
@@ -527,7 +508,6 @@ app.patch('/api/deliverer/deliveries/:id/complete', auth(['deliverer']), (req, r
 // API PUBLIQUE — Intégration boutiques externes
 // ════════════════════════════════════════════
 
-// Documentation de l'API
 app.get('/api/v1', (req, res) => {
   res.json({
     name: 'Traceo API',
@@ -542,27 +522,10 @@ app.get('/api/v1', (req, res) => {
       'DELETE /api/v1/deliveries/:id': 'Annuler une livraison',
       'GET /api/v1/deliverers': 'Lister vos livreurs',
       'GET /api/v1/account': 'Infos de votre compte'
-    },
-    example: {
-      request: 'POST /api/v1/deliveries',
-      headers: { 'x-api-key': 'tk_live_xxx', 'Content-Type': 'application/json' },
-      body: {
-        clientName: 'Jean Dupont',
-        clientPhone: '+237612345678',
-        description: 'Commande #1234 - 2 pizzas',
-        delivererId: 'optionnel'
-      },
-      response: {
-        id: 'uuid',
-        status: 'pending',
-        shareLink: 'https://traceo.cm/share/TOKEN',
-        message: 'WhatsApp envoyé au client'
-      }
     }
   });
 });
 
-// Créer une livraison via API externe
 app.post('/api/v1/deliveries', apiKeyAuth, async (req, res) => {
   const check = checkSubscriptionLimits(req.company.id);
   if (!check.allowed) return res.status(403).json({ error: check.reason });
@@ -616,7 +579,6 @@ app.post('/api/v1/deliveries', apiKeyAuth, async (req, res) => {
   });
 });
 
-// Lister livraisons via API
 app.get('/api/v1/deliveries', apiKeyAuth, (req, res) => {
   const { status, limit = 20, page = 1 } = req.query;
   let deliveries = db.deliveries.filter(d => d.companyId === req.company.id);
@@ -627,14 +589,12 @@ app.get('/api/v1/deliveries', apiKeyAuth, (req, res) => {
   res.json({ total, page: parseInt(page), limit: parseInt(limit), deliveries: paginated });
 });
 
-// Détail d'une livraison via API
 app.get('/api/v1/deliveries/:id', apiKeyAuth, (req, res) => {
   const delivery = db.deliveries.find(d => d.id === req.params.id && d.companyId === req.company.id);
   if (!delivery) return res.status(404).json({ error: 'Non trouvée' });
   res.json(delivery);
 });
 
-// Statut uniquement
 app.get('/api/v1/deliveries/:id/status', apiKeyAuth, (req, res) => {
   const delivery = db.deliveries.find(d => d.id === req.params.id && d.companyId === req.company.id);
   if (!delivery) return res.status(404).json({ error: 'Non trouvée' });
@@ -646,7 +606,6 @@ app.get('/api/v1/deliveries/:id/status', apiKeyAuth, (req, res) => {
   });
 });
 
-// Annuler une livraison
 app.delete('/api/v1/deliveries/:id', apiKeyAuth, (req, res) => {
   const delivery = db.deliveries.find(d => d.id === req.params.id && d.companyId === req.company.id);
   if (!delivery) return res.status(404).json({ error: 'Non trouvée' });
@@ -657,14 +616,12 @@ app.delete('/api/v1/deliveries/:id', apiKeyAuth, (req, res) => {
   res.json({ success: true, message: 'Livraison annulée' });
 });
 
-// Livreurs via API
 app.get('/api/v1/deliverers', apiKeyAuth, (req, res) => {
   res.json(db.deliverers
     .filter(d => d.companyId === req.company.id)
     .map(d => ({ id: d.id, name: d.name, phone: d.phone, active: d.active })));
 });
 
-// Infos compte via API
 app.get('/api/v1/account', apiKeyAuth, (req, res) => {
   res.json({
     id: req.company.id,
@@ -692,6 +649,6 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Traceo v2 Backend → port ${PORT}`);
-  console.log(`📡 API publique disponible sur /api/v1`);
+  console.log(`📡 WhatsApp: ${FONNTE_TOKEN ? '✅ Fonnte connecté' : '⚠️ Mode simulation (FONNTE_TOKEN manquant)'}`);
   console.log(`🔑 Admin: admin@traceo.cm / admin123`);
 });
