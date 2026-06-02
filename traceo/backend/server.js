@@ -282,6 +282,14 @@ app.get('/api/admin/stats', auth(['admin']), async (req, res) => {
     pool.query("SELECT COUNT(*) FROM deliveries WHERE status != 'completed'"),
     pool.query("SELECT COUNT(*) FROM whatsapp_logs WHERE status IN ('sent','simulated')")
   ]);
+  const shareLink = `${APP_URL}/share/${locationToken}`;
+const clientMsg = `Bonjour ${clientName} ! Votre commande chez *${c.name}* est prête.\n\nPour que notre livreur vous trouve, appuyez sur ce lien et partagez votre position :\n${shareLink}\n\n_Ce lien expire dans 3 heures._`;
+
+try {
+  await sendWhatsApp(clientPhone, clientMsg, c.name);
+} catch (e) {
+  console.error('WhatsApp error:', e.message);
+}
   res.json({
     companies: parseInt(companies.rows[0].count),
     activeCompanies: parseInt(companies.rows[0].count),
