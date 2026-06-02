@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API = "https://traceo-ixa7.onrender.com/api";
 
 const GlobalStyles = () => (
   <style>{`
